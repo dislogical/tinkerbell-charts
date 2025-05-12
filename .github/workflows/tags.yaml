@@ -2,13 +2,12 @@ on:
   push:
     tags:
       - "v*"
-name: Create release
+name: Handle Version Tag
 jobs:
   release:
+    name: Create Release
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
       - name: Generate Release Notes
         run: |
           release_notes=$(gh api repos/{owner}/{repo}/releases/generate-notes -F tag_name=${{ github.ref }} --jq .body)
@@ -19,20 +18,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
-
-      - name: install helm
-        uses: Azure/setup-helm@v3.3
-        with:
-          version: v3.9.4
-
-      - name: create helm chart package
-        run: ver=${GITHUB_REF_NAME}; helm package tinkerbell/stack --dependency-update --version ${ver:1}
-     
-      - name: login to ghcr.io
-        run: echo ${{ secrets.GITHUB_TOKEN }} | helm registry login ghcr.io/tinkerbell --username ${{ github.actor }} --password-stdin
- 
-      - name: publish chart to ghcr.io
-        run: ver=${GITHUB_REF_NAME}; helm push stack-${ver:1}.tgz oci://ghcr.io/tinkerbell/charts
 
       - name: Create Release
         id: create_release
@@ -45,3 +30,34 @@ jobs:
           body: ${{ env.RELEASE_NOTES }}
           draft: false
           prerelease: true
+
+  publish_charts:
+    name: Publish Charts
+    runs-on: ubuntu-latest
+    needs:
+      - release
+    strategy:
+      matrix:
+        chart:
+          - stack
+          - tink
+          - smee
+          - rufio
+          - hegel
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v2
+
+      - name: Install Helm
+        uses: Azure/setup-helm@v3.3
+        with:
+          version: v3.9.4
+
+      - name: Login to ghcr.io
+        run: echo ${{ secrets.GITHUB_TOKEN }} | helm registry login ghcr.io/tinkerbell --username ${{ github.actor }} --password-stdin
+
+      - name: Create ${{ matrix.chart }} helm chart package
+        run: ver=${GITHUB_REF_NAME}; helm package tinkerbell/${{ matrix.chart }} --dependency-update --version ${ver:1}
+
+      - name: Publish ${{ matrix.chart }} chart to ghcr.io
+        run: ver=${GITHUB_REF_NAME}; helm push ${{ matrix.chart }}-${ver:1}.tgz oci://ghcr.io/tinkerbell/charts
